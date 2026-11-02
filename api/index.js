@@ -2,19 +2,25 @@ import express from 'express';
 import pg from 'pg';
 import crypto from 'node:crypto';
 import { decode } from 'light-bolt11-decoder';
-import { provider, providerFor } from '../lib/providers.js';
+import { provider, providerFor, lnurl } from '../lib/providers.js';
 
 const { DATABASE_URL, ADMIN_PASSWORD, SESSION_SECRET, APP_URL = '' } = process.env;
 const MIN_CENTS = 100n, MAX_CENTS = 50000n, EXPIRY_SECS = 3600;
 const pool = new pg.Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 3 });
-const ready = pool.query(`CREATE TABLE IF NOT EXISTS orders(
-  ref TEXT PRIMARY KEY, usd_cents INTEGER NOT NULL, sats INTEGER NOT NULL, rate TEXT NOT NULL,
-  rate_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', provider TEXT NOT NULL,
-  provider_id TEXT UNIQUE NOT NULL, bolt11 TEXT NOT NULL, expires_at INTEGER NOT NULL,
-  paid_at INTEGER, late BOOLEAN NOT NULL DEFAULT false, note TEXT, created_at INTEGER NOT NULL)`)
-  .then(() => pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS verify_url TEXT'));
+const ready = (async () => {
+  await pool.query(`CREATE TABLE IF NOT EXISTS orders(
+    ref TEXT PRIMARY KEY, usd_cents INTEGER NOT NULL, sats INTEGER NOT NULL, rate TEXT NOT NULL,
+    rate_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', provider TEXT NOT NULL,
+    provider_id TEXT UNIQUE NOT NULL, bolt11 TEXT NOT NULL, expires_at INTEGER NOT NULL,
+    paid_at INTEGER, late BOOLEAN NOT NULL DEFAULT false, note TEXT, created_at INTEGER NOT NULL)`);
+  await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS verify_url TEXT');
+  await pool.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS dest TEXT');
+  await pool.query('CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)');
+  await pool.query('CREATE TABLE IF NOT EXISTS address_log(id SERIAL PRIMARY KEY, address TEXT NOT NULL, changed_at INTEGER NOT NULL)');
+})();
 const q = async (sql, p = []) => (await pool.query(sql, p)).rows;
 const now = () => Math.floor(Date.now() / 1000);
+const getAddress = async () => (await q(`SELECT value FROM settings WHERE key='ln_address'`))[0]?.value || process.env.LN_ADDRESS || '';
 
 // best-effort per-instance limiter (serverless instances don't share memory; add edge limits for real protection)
 const hits = new Map();
@@ -60,7 +66,6 @@ const pub = o => ({ ref: o.ref, usd: (o.usd_cents / 100).toFixed(2), sats: o.sat
 const app = express();
 app.set('trust proxy', 1);
 
-// Webhook providers only: raw body for signature checks, then status is re-checked with the provider.
 app.post('/api/webhook', express.raw({ type: '*/*', limit: '10kb' }), async (req, res) => {
   if (['manual', 'lnurl'].includes(provider().name)) return res.sendStatus(404);
   try {
@@ -75,19 +80,19 @@ app.post('/api/webhook', express.raw({ type: '*/*', limit: '10kb' }), async (req
 app.use(express.json({ limit: '4kb' }));
 
 app.post('/api/checkout', limit('checkout', 10), async (req, res) => {
-  const p = provider();
-  if (p.name === 'manual') return res.status(404).json({ error: 'Payments are by link only. Please use the payment link you were sent.' });
+  if (provider().name === 'manual') return res.status(404).json({ error: 'Payments are by link only. Please use the payment link you were sent.' });
   const usd = parseUsd(req.body?.usd);
   if (usd === null) return res.status(400).json({ error: 'Enter a valid USD amount, like 25 or 25.50.' });
   if (usd < MIN_CENTS || usd > MAX_CENTS) return res.status(400).json({ error: 'Amount must be between $1.00 and $500.00.' });
   try {
     await ready;
+    const p = provider().name === 'lnurl' ? lnurl(await getAddress()) : provider(); // uses the address the admin set most recently
     const { rateCents, text } = await getRate();
     const sats = toSats(usd, rateCents), ref = crypto.randomBytes(12).toString('base64url');
     const inv = await p.createInvoice(Number(sats), `Safepay ${ref}`, ref);
     if (!inv.id || !inv.bolt11) throw new Error('bad invoice');
-    await q(`INSERT INTO orders(ref,usd_cents,sats,rate,rate_at,provider,provider_id,bolt11,expires_at,verify_url,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-      [ref, Number(usd), Number(sats), text, now(), p.name, inv.id, inv.bolt11, inv.expires || now() + EXPIRY_SECS, inv.verify || null, now()]);
+    await q(`INSERT INTO orders(ref,usd_cents,sats,rate,rate_at,provider,provider_id,bolt11,expires_at,verify_url,dest,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [ref, Number(usd), Number(sats), text, now(), p.name, inv.id, inv.bolt11, inv.expires || now() + EXPIRY_SECS, inv.verify || null, p.addr || null, now()]);
     res.json({ ref });
   } catch (e) {
     console.error(JSON.stringify({ evt: 'checkout_failed', msg: e.message }));
@@ -120,6 +125,22 @@ app.post('/api/admin/login', limit('login', 5), (req, res) => {
   res.json({ ok: true });
 });
 
+// The receiving Lightning address that new checkouts pay to. Updating it affects every payment created after this moment.
+app.get('/api/admin/address', auth, async (_, res) => {
+  await ready;
+  res.json({ address: await getAddress(), history: await q('SELECT address, changed_at FROM address_log ORDER BY id DESC LIMIT 10') });
+});
+app.post('/api/admin/address', auth, async (req, res) => {
+  const addr = String(req.body?.address || '').trim().toLowerCase();
+  try { await lnurl(addr).params(); }
+  catch { return res.status(400).json({ error: 'That is not a working Lightning address. Check the spelling and that the wallet supports receiving.' }); }
+  await ready;
+  await q(`INSERT INTO settings(key,value,updated_at) VALUES('ln_address',$1,$2) ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=$2`, [addr, now()]);
+  await q('INSERT INTO address_log(address, changed_at) VALUES($1,$2)', [addr, now()]);
+  console.log(JSON.stringify({ evt: 'address_changed' }));
+  res.json({ ok: true, address: addr });
+});
+
 app.post('/api/admin/links', auth, async (req, res) => {
   try {
     const inv = String(req.body?.bolt11 || '').trim().replace(/^lightning:/i, '');
@@ -147,7 +168,7 @@ app.post('/api/admin/links', auth, async (req, res) => {
 
 app.get('/api/admin/links', auth, async (_, res) => {
   await ready;
-  res.json(await q(`SELECT ref,usd_cents,sats,status,expires_at,paid_at,late,note,provider,created_at FROM orders ORDER BY created_at DESC LIMIT 100`));
+  res.json(await q(`SELECT ref,usd_cents,sats,status,expires_at,paid_at,late,note,provider,dest,created_at FROM orders ORDER BY created_at DESC LIMIT 100`));
 });
 
 // Seller confirms they saw the money arrive in their wallet. Logged for audit.

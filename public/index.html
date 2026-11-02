@@ -3,48 +3,59 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Safepay</title>
 <style>
-:root{--g:#00a650;--gd:#007a3b;--bg:#eef0f3;--ink:#13202b;--mute:#667180;--line:#d7ece0;--tint:#e9faf0;--warn:#fff4dc;--warnink:#a85a00;--bad:#b3261e}
+:root{--g:#00c853;--gd:#00963e;--bg:#eceef1;--ink:#111c2b;--mute:#6b7585;--line:#c9f0d8;--tint:#e6fbee;--warn:#fff4dc;--warnink:#b45a00;--bad:#b3261e}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;padding:max(14px,env(safe-area-inset-top)) 14px 28px}
-main{max-width:440px;margin:0 auto;background:#fff;border-radius:28px;padding:22px 18px 24px;box-shadow:0 6px 24px rgba(0,0,0,.08)}
-h1{font-size:1.5rem;text-align:center;margin:6px 0 4px}.sub{text-align:center;color:var(--mute);margin:0 0 18px}
-.panel{background:var(--tint);border-radius:22px;padding:16px}.lbl{font-weight:700;color:var(--gd);margin:0 0 10px}
+main{max-width:440px;margin:0 auto;background:#fff;border-radius:34px;padding:14px 18px 26px;box-shadow:0 8px 28px rgba(0,0,0,.09)}
+.grab{width:64px;height:6px;border-radius:6px;background:#d0d4db;margin:2px auto 18px}
+h1{font-size:1.7rem;text-align:center;margin:0 0 12px;font-weight:800}h1 span{color:var(--g)}
+.pill{display:flex;width:max-content;align-items:center;gap:8px;margin:0 auto 18px;background:var(--tint);color:var(--gd);font-weight:800;padding:10px 20px;border-radius:999px}
+.pill i{width:24px;height:24px;border-radius:50%;background:var(--g);color:#fff;font-style:normal;display:grid;place-items:center;font-size:.85rem}
+.merch{border:2px solid #e3e6ea;border-radius:30px;text-align:center;padding:22px 14px;margin-bottom:18px}
+.logo{width:84px;height:84px;margin:0 auto 12px;border-radius:24px;background:linear-gradient(145deg,#00e05a,#00b248);display:grid;place-items:center;box-shadow:0 10px 22px rgba(0,200,83,.3)}
+.logo svg{width:44px;height:44px}.merch b{font-size:1.5rem;display:block}.merch p{margin:0;color:var(--mute)}
+.panel{background:var(--tint);border-radius:26px;padding:18px}.lbl{font-weight:800;color:var(--gd);margin:0 0 12px;letter-spacing:.02em}
 .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-.amt{font:inherit;font-weight:700;padding:14px 0;border-radius:999px;border:2px solid var(--line);background:#fff;color:var(--ink);cursor:pointer}
-.amt[aria-pressed=true]{border-color:var(--g);background:#d4f6e2}
-.more{width:100%;margin-top:10px;padding:13px;border:0;border-radius:999px;background:#b9f5d0;color:var(--gd);font:inherit;font-weight:700;cursor:pointer}
-.custom{display:flex;align-items:center;gap:8px;margin-top:10px;background:#fff;border:2px solid var(--line);border-radius:999px;padding:0 16px}
-.custom b{color:var(--g);font-size:1.3rem}.custom input{flex:1;min-width:0;border:0;outline:0;font:inherit;font-size:1.15rem;padding:13px 0;background:transparent}
+.amt{font:inherit;font-weight:800;font-size:1.1rem;padding:16px 0;border-radius:999px;border:2px solid var(--line);background:#fff;color:var(--ink);cursor:pointer}
+.amt[aria-pressed=true]{border-color:var(--g);background:#d2f7e1}
+.more{width:100%;margin-top:12px;padding:15px;border:0;border-radius:999px;background:#b8f5cf;color:var(--gd);font:inherit;font-weight:800;font-size:1.05rem;cursor:pointer}
+.custom{display:flex;align-items:center;gap:8px;margin-top:12px;background:#fff;border:2px solid var(--line);border-radius:999px;padding:0 20px}
+.custom b{color:var(--g);font-size:1.4rem}.custom input{flex:1;min-width:0;border:0;outline:0;font:inherit;font-size:1.2rem;font-weight:600;padding:15px 0;background:transparent}
 .custom:focus-within{border-color:var(--g)}
-.pay{display:block;width:100%;text-align:center;text-decoration:none;margin-top:16px;padding:16px;border:0;border-radius:999px;background:var(--g);color:#fff;font:inherit;font-size:1.1rem;font-weight:800;cursor:pointer;box-shadow:0 8px 18px rgba(0,166,80,.28)}
+.pay{display:block;width:100%;text-align:center;text-decoration:none;margin-top:18px;padding:18px;border:0;border-radius:999px;background:var(--g);color:#fff;font:inherit;font-size:1.2rem;font-weight:800;cursor:pointer;box-shadow:0 10px 22px rgba(0,200,83,.3)}
 .pay:disabled{opacity:.55}:focus-visible{outline:3px solid #0b5cff;outline-offset:2px}
-.timer{background:var(--warn);color:var(--warnink);text-align:center;font-weight:800;padding:14px;border-radius:16px}
-.due{text-align:center;color:var(--mute);font-weight:700;margin:16px 0 0}.big{text-align:center;font-size:3rem;font-weight:800;color:var(--g);line-height:1.1}
-.hint{text-align:center;color:var(--mute);margin:4px 0 12px}
-#qr{display:flex;justify-content:center;padding:18px;border:2px solid #e6e9ee;border-radius:24px}
-.box{display:flex;justify-content:space-between;align-items:center;gap:10px;background:#f4f6f9;border-radius:16px;padding:12px 14px;margin-top:12px}
-.box small{display:block;color:var(--mute);font-weight:700}.mono{font-family:ui-monospace,Menlo,monospace;font-size:.9rem;overflow-wrap:anywhere}
-.chip{background:var(--warn);color:var(--warnink);font-weight:800;font-size:.85rem;padding:8px 12px;border-radius:12px;white-space:nowrap}
-.copy{border:0;background:transparent;color:var(--gd);font:inherit;font-weight:700;cursor:pointer}
-.meta{text-align:center;color:var(--mute);font-size:.85rem;margin:10px 0 0}
-#err{color:var(--bad);text-align:center;min-height:1.4em;margin:10px 0 0}.ok{color:var(--g)}[hidden]{display:none!important}
+.foot{text-align:center;color:var(--mute);margin:16px 0 0}.foot b{color:#3d4757}
+.timer{background:var(--warn);color:var(--warnink);text-align:center;font-weight:800;letter-spacing:.04em;padding:16px;border-radius:20px}
+.due{text-align:center;color:var(--mute);font-weight:800;letter-spacing:.12em;margin:20px 0 0}.big{text-align:center;font-size:3.4rem;font-weight:800;color:var(--g);line-height:1.15}
+.hint{text-align:center;color:var(--mute);margin:4px 0 14px}
+#qr{display:flex;justify-content:center;padding:20px;border:2px solid #e3e6ea;border-radius:28px}
+.box{display:flex;justify-content:space-between;align-items:center;gap:10px;background:#f4f6f9;border-radius:18px;padding:14px 16px;margin-top:14px}
+.box small{display:block;color:var(--mute);font-weight:800;letter-spacing:.08em}.mono{font-weight:700;overflow-wrap:anywhere}
+.chip{background:var(--warn);color:var(--warnink);font-weight:800;font-size:.85rem;padding:10px 14px;border-radius:14px;white-space:nowrap}
+.copy{border:0;background:transparent;color:var(--gd);font:inherit;font-weight:800;cursor:pointer}
+.meta{text-align:center;color:var(--mute);font-size:.85rem;margin:12px 0 0}
+#err{color:var(--bad);text-align:center;min-height:1.4em;margin:10px 0 0}.ok{color:var(--g)}.sub{text-align:center;color:var(--mute)}[hidden]{display:none!important}
 </style></head><body><main>
+<div class="grab"></div>
 
 <section id="start">
-<h1>Safepay</h1><p class="sub">Pay with Bitcoin Lightning, using Cash App or any Lightning wallet</p>
-<div class="panel"><p class="lbl">Select amount (USD)</p>
+<h1>Pay with <span>Safepay</span></h1>
+<div class="pill"><i>&#10003;</i>Secure Checkout</div>
+<div class="merch"><div class="logo"><svg viewBox="0 0 24 24" fill="#fff" aria-hidden="true"><path d="M13.5 2 5 13.5h5.5L9.5 22 19 9.5h-5.8z"/></svg></div><b>Safepay</b><p>Instant payment checkout</p></div>
+<div class="panel"><p class="lbl">SELECT AMOUNT</p>
 <div class="grid" id="g1"></div>
 <div class="grid" id="g2" hidden style="margin-top:10px"></div>
 <button class="more" id="more" type="button">Show more amounts</button>
 <label class="custom"><b>$</b><input id="usd" inputmode="decimal" autocomplete="off" placeholder="Custom amount" aria-label="Custom amount in USD"></label></div>
 <p id="err" role="alert"></p>
 <button id="go" class="pay" type="button">Pay Now</button>
+<p class="foot">Powered by <b>Safepay</b></p>
 </section>
 
 <section id="pay" hidden>
 <div class="timer">TIME REMAINING <span id="cd">--:--</span></div>
 <p class="due">AMOUNT DUE</p><div class="big" id="usdOut"></div><p class="hint">Scan or tap to pay</p>
 <div id="qr"></div>
-<div class="box"><div><small>ORDER</small><span class="mono" id="ref"></span></div><span class="chip" id="chip">AWAITING PAYMENT</span></div>
+<div class="box"><div><small>ORDER ID</small><span class="mono" id="ref"></span></div><span class="chip" id="chip">AWAITING PAYMENT</span></div>
 <div class="box"><div><small>lightning:</small><span class="mono" id="inv"></span></div><button class="copy" id="copy" type="button">Copy</button></div>
 <a id="cash" class="pay" rel="noopener">Pay Now</a>
 <p class="meta" id="meta"></p>

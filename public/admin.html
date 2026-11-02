@@ -12,18 +12,24 @@ label{display:block;font-weight:600;margin:10px 0 4px}input,textarea{width:100%;
 textarea{min-height:90px;font-size:.85rem}
 button{font:inherit;font-weight:700;padding:11px 14px;margin-top:12px;border-radius:10px;border:2px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer}
 button.alt{background:transparent;color:var(--accent);margin:6px 6px 0 0;padding:6px 10px}
-.mute{color:var(--mute);font-size:.9rem}.bad{color:var(--bad)}.item{border-top:1px solid var(--line);padding:10px 0}[hidden]{display:none!important}
+.mute{color:var(--mute);font-size:.9rem}.bad{color:var(--bad)}.ok{color:var(--accent)}.item{border-top:1px solid var(--line);padding:10px 0}[hidden]{display:none!important}
 </style></head><body><main>
 <h1>Safepay admin</h1>
 <section id="login" class="card"><label for="pw">Password</label><input id="pw" type="password" autocomplete="current-password">
 <button id="in">Sign in</button><p class="bad" id="lerr" role="alert"></p></section>
 <section id="panel" hidden>
-<div class="card"><h2>New payment link</h2>
-<p class="mute">Create an invoice in Zeus or Phoenix for the exact sats, with a 60 minute expiry, then paste it here.</p>
+<div class="card"><h2>Receiving Lightning address</h2>
+<p class="mute">New payments are made to this address. Save a new one and every payment created after that goes to it. Payments already created keep the address they were made with.</p>
+<p><strong>Current:</strong> <span id="cur">none set</span></p>
+<label for="addr">New Lightning address</label><input id="addr" placeholder="name@domain.com" autocapitalize="none" autocomplete="off">
+<button id="sv">Save address</button><p id="aerr" class="bad" role="alert"></p><p id="aok" class="ok"></p>
+<div id="hist" class="mute"></div></div>
+<div class="card"><h2>Link for one specific invoice</h2>
+<p class="mute">Optional. Paste an invoice made in your wallet app to get a one-off payment link.</p>
 <label for="usd">USD price you quoted</label><input id="usd" inputmode="decimal" placeholder="25.00">
 <label for="inv">Lightning invoice</label><textarea id="inv" placeholder="lnbc..."></textarea>
 <label for="note">Note (optional, only you see it)</label><input id="note" maxlength="120">
 <button id="mk">Create link</button><p id="merr" class="bad" role="alert"></p>
 <div id="out" hidden><p><strong>Send this link:</strong></p><p id="lnk" class="mute" style="word-break:break-all"></p><button class="alt" id="cp">Copy link</button></div></div>
-<div class="card"><h2>Links</h2><p class="mute">Only tap Mark paid after you see the payment arrive in your wallet.</p><div id="list"></div></div>
+<div class="card"><h2>Payments</h2><p class="mute">Only tap Mark paid after you see the payment arrive in your wallet.</p><div id="list"></div></div>
 </section></main><script src="admin.js"></script></body></html>
