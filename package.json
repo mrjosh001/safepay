@@ -1,0 +1,8 @@
+{
+  "name": "safepay",
+  "version": "0.2.0",
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "scripts": { "dev": "node --env-file=.env dev.js" },
+  "dependencies": { "express": "^4.19.2", "pg": "^8.12.0" }
+}
