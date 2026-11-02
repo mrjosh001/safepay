@@ -1,16 +1,17 @@
 import express from 'express';
 import pg from 'pg';
 import crypto from 'node:crypto';
-import { provider } from '../lib/providers.js';
+import { decode } from 'light-bolt11-decoder';
+import { provider, providerFor } from '../lib/providers.js';
 
-const { DATABASE_URL } = process.env;
+const { DATABASE_URL, ADMIN_PASSWORD, SESSION_SECRET, APP_URL = '' } = process.env;
 const MIN_CENTS = 100n, MAX_CENTS = 50000n, EXPIRY_SECS = 3600;
 const pool = new pg.Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 3 });
 const ready = pool.query(`CREATE TABLE IF NOT EXISTS orders(
   ref TEXT PRIMARY KEY, usd_cents INTEGER NOT NULL, sats INTEGER NOT NULL, rate TEXT NOT NULL,
   rate_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', provider TEXT NOT NULL,
   provider_id TEXT UNIQUE NOT NULL, bolt11 TEXT NOT NULL, expires_at INTEGER NOT NULL,
-  paid_at INTEGER, late BOOLEAN NOT NULL DEFAULT false, created_at INTEGER NOT NULL)`);
+  paid_at INTEGER, late BOOLEAN NOT NULL DEFAULT false, note TEXT, created_at INTEGER NOT NULL)`);
 const q = async (sql, p = []) => (await pool.query(sql, p)).rows;
 const now = () => Math.floor(Date.now() / 1000);
 
@@ -20,6 +21,10 @@ const limit = (name, max) => (req, res, next) => {
   const k = `${name}:${req.ip}`, t = now(), h = (hits.get(k) || []).filter(x => x > t - 60);
   if (h.length >= max) return res.status(429).json({ error: 'Too many requests, try again shortly.' });
   h.push(t); hits.set(k, h); next();
+};
+const parseUsd = v => {
+  const m = /^(\d{1,4})(?:\.(\d{1,2}))?$/.exec(String(v ?? ''));
+  return m ? BigInt(m[1]) * 100n + BigInt((m[2] || '').padEnd(2, '0') || '0') : null;
 };
 
 async function getRate() {
@@ -36,7 +41,7 @@ const toSats = (usd, rate) => (usd * 100000000n + rate - 1n) / rate; // integer 
 
 async function refresh(o) {
   if (o.status === 'paid') return o;
-  const paid = await provider().isPaid(o.provider_id).catch(() => false);
+  const paid = await providerFor(o.provider).isPaid(o.provider_id).catch(() => false); // manual: always false
   if (paid) {
     const late = o.status === 'expired' || now() > o.expires_at;
     const r = await q(`UPDATE orders SET status='paid', paid_at=$1, late=$2 WHERE ref=$3 AND status IN ('pending','expired') RETURNING ref`, [now(), late, o.ref]);
@@ -54,8 +59,9 @@ const pub = o => ({ ref: o.ref, usd: (o.usd_cents / 100).toFixed(2), sats: o.sat
 const app = express();
 app.set('trust proxy', 1);
 
-// Webhook needs the raw body for signature checks; the signature is verified, then status is re-checked with the provider.
+// Automated providers only: raw body for signature checks, then status is re-checked with the provider.
 app.post('/api/webhook', express.raw({ type: '*/*', limit: '10kb' }), async (req, res) => {
+  if (provider().name === 'manual') return res.sendStatus(404);
   try {
     const id = provider().webhookPaymentId(req.body, req.headers);
     await ready;
@@ -65,22 +71,22 @@ app.post('/api/webhook', express.raw({ type: '*/*', limit: '10kb' }), async (req
   } catch (e) { res.sendStatus(e.message === 'bad signature' ? 401 : 500); }
 });
 
-app.use(express.json({ limit: '2kb' }));
+app.use(express.json({ limit: '4kb' }));
 
 app.post('/api/checkout', limit('checkout', 10), async (req, res) => {
-  const m = /^(\d{1,4})(?:\.(\d{1,2}))?$/.exec(String(req.body?.usd ?? ''));
-  if (!m) return res.status(400).json({ error: 'Enter a valid USD amount, like 25 or 25.50.' });
-  const usd = BigInt(m[1]) * 100n + BigInt((m[2] || '').padEnd(2, '0') || '0');
+  const p = provider();
+  if (p.name === 'manual') return res.status(404).json({ error: 'Payments are by link only. Please use the payment link you were sent.' });
+  const usd = parseUsd(req.body?.usd);
+  if (usd === null) return res.status(400).json({ error: 'Enter a valid USD amount, like 25 or 25.50.' });
   if (usd < MIN_CENTS || usd > MAX_CENTS) return res.status(400).json({ error: 'Amount must be between $1.00 and $500.00.' });
   try {
     await ready;
     const { rateCents, text } = await getRate();
-    const sats = toSats(usd, rateCents), ref = crypto.randomBytes(12).toString('base64url'), p = provider();
+    const sats = toSats(usd, rateCents), ref = crypto.randomBytes(12).toString('base64url');
     const inv = await p.createInvoice(Number(sats), `Safepay ${ref}`, ref);
     if (!inv.id || !inv.bolt11) throw new Error('bad invoice');
     await q(`INSERT INTO orders(ref,usd_cents,sats,rate,rate_at,provider,provider_id,bolt11,expires_at,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
       [ref, Number(usd), Number(sats), text, now(), p.name, inv.id, inv.bolt11, now() + EXPIRY_SECS, now()]);
-    console.log(JSON.stringify({ evt: 'checkout_created', ref, sats: Number(sats) }));
     res.json({ ref });
   } catch (e) {
     console.error(JSON.stringify({ evt: 'checkout_failed', msg: e.message }));
@@ -93,6 +99,62 @@ app.get('/api/order/:ref', limit('status', 60), async (req, res) => {
   const o = (await q('SELECT * FROM orders WHERE ref=$1', [req.params.ref]))[0];
   if (!o) return res.status(404).json({ error: 'Order not found.' });
   res.json(pub(await refresh(o)));
+});
+
+// ---------- Admin (manual links) ----------
+const sign = v => crypto.createHmac('sha256', SESSION_SECRET || '').update(v).digest('hex');
+const safeEq = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
+const sha = v => crypto.createHash('sha256').update(String(v)).digest('hex');
+const isAdmin = req => {
+  const c = /(?:^|;\s*)sp_admin=([^;]+)/.exec(req.headers.cookie || '')?.[1]; if (!c || !SESSION_SECRET) return false;
+  const [exp, sig] = c.split('.');
+  return Number(exp) > now() && safeEq(sig || '', sign(exp));
+};
+const auth = (req, res, next) => (isAdmin(req) ? next() : res.status(401).json({ error: 'Please sign in.' }));
+
+app.post('/api/admin/login', limit('login', 5), (req, res) => {
+  if (!ADMIN_PASSWORD || !SESSION_SECRET || !safeEq(sha(req.body?.password), sha(ADMIN_PASSWORD))) return res.status(401).json({ error: 'Wrong password.' });
+  const exp = String(now() + 8 * 3600);
+  res.set('Set-Cookie', `sp_admin=${exp}.${sign(exp)}; HttpOnly; Secure; SameSite=Strict; Path=/api/admin; Max-Age=28800`);
+  res.json({ ok: true });
+});
+
+app.post('/api/admin/links', auth, async (req, res) => {
+  try {
+    const inv = String(req.body?.bolt11 || '').trim().replace(/^lightning:/i, '');
+    if (!/^lnbc[0-9a-z]{50,2000}$/i.test(inv)) return res.status(400).json({ error: 'Paste a mainnet Lightning invoice (starts with lnbc).' });
+    const sec = n => decode(inv).sections.find(s => s.name === n)?.value;
+    const msat = sec('amount'), hash = sec('payment_hash');
+    if (!msat || !hash) return res.status(400).json({ error: 'The invoice must have a fixed amount. Create it with the exact sats.' });
+    if (BigInt(msat) % 1000n !== 0n) return res.status(400).json({ error: 'Invoice amount must be whole sats.' });
+    const sats = Number(BigInt(msat) / 1000n), expires = Number(sec('timestamp')) + Number(sec('expiry') || 3600);
+    if (expires <= now() + 60) return res.status(400).json({ error: 'That invoice has expired or is about to. Create a fresh one.' });
+    const usd = parseUsd(req.body?.usd);
+    if (usd === null || usd < MIN_CENTS || usd > MAX_CENTS) return res.status(400).json({ error: 'Enter the USD price you quoted ($1 to $500).' });
+    const implied = (usd * 100000000n * 100n / BigInt(sats) / 100n); // USD cents per BTC, implied by this invoice
+    const rate = `${implied / 100n}.${String(implied % 100n).padStart(2, '0')}`;
+    const ref = crypto.randomBytes(12).toString('base64url'), note = String(req.body?.note || '').slice(0, 120);
+    await ready;
+    await q(`INSERT INTO orders(ref,usd_cents,sats,rate,rate_at,provider,provider_id,bolt11,expires_at,note,created_at) VALUES($1,$2,$3,$4,$5,'manual',$6,$7,$8,$9,$10)`,
+      [ref, Number(usd), sats, rate, now(), hash, inv, expires, note, now()]);
+    console.log(JSON.stringify({ evt: 'link_created', ref, sats }));
+    res.json({ ref, link: `${APP_URL.replace(/\/$/, '')}/#${ref}`, sats, expiresAt: expires });
+  } catch (e) {
+    res.status(e.code === '23505' ? 409 : 400).json({ error: e.code === '23505' ? 'That invoice already has a link.' : 'Could not read that invoice.' });
+  }
+});
+
+app.get('/api/admin/links', auth, async (_, res) => {
+  await ready;
+  res.json(await q(`SELECT ref,usd_cents,sats,status,expires_at,paid_at,late,note,created_at FROM orders WHERE provider='manual' ORDER BY created_at DESC LIMIT 100`));
+});
+
+// Seller confirms they saw the money arrive in their wallet. Logged for audit.
+app.post('/api/admin/links/:ref/paid', auth, async (req, res) => {
+  await ready;
+  const r = await q(`UPDATE orders SET status='paid', paid_at=$1, late=(expires_at < $1) WHERE ref=$2 AND provider='manual' AND status IN ('pending','expired') RETURNING ref`, [now(), req.params.ref]);
+  if (r.length) console.log(JSON.stringify({ evt: 'manually_confirmed_paid', ref: req.params.ref }));
+  res.json({ ok: r.length === 1 });
 });
 
 app.get('/api/health', (_, res) => res.json({ ok: true }));
